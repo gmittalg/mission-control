@@ -5,6 +5,7 @@
 
 import { NextRequest } from 'next/server';
 import { registerClient, unregisterClient } from '@/lib/events';
+import { getClientId } from '@/lib/api-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,8 +15,9 @@ export async function GET(request: NextRequest) {
   // Create a readable stream for SSE
   const stream = new ReadableStream({
     start(controller) {
+      const clientId = getClientId(request);
       // Register this client
-      registerClient(controller);
+      registerClient(clientId, controller);
 
       // Send initial connection message
       const connectMsg = encoder.encode(`: connected\n\n`);
@@ -33,8 +35,9 @@ export async function GET(request: NextRequest) {
 
       // Handle client disconnect
       request.signal.addEventListener('abort', () => {
+        const clientId = getClientId(request);
         clearInterval(keepAliveInterval);
-        unregisterClient(controller);
+        unregisterClient(clientId, controller);
         try {
           controller.close();
         } catch (error) {

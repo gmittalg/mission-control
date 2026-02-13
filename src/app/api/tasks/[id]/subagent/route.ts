@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { getClientId } from '@/lib/api-utils';
 
 /**
  * POST /api/tasks/[id]/subagent
@@ -13,12 +14,13 @@ import { broadcast } from '@/lib/events';
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const taskId = params.id;
+    const { id: taskId } = await params;
+    const clientId = getClientId(request);
     const body = await request.json();
-    
+
     const { openclaw_session_id, agent_name } = body;
 
     if (!openclaw_session_id) {
@@ -28,17 +30,17 @@ export async function POST(
       );
     }
 
-    const db = getDb();
+    const db = getDb(clientId);
     const sessionId = crypto.randomUUID();
 
     // Create a placeholder agent if agent_name is provided
     // Otherwise, we'll need to link to an existing agent
     let agentId = null;
-    
+
     if (agent_name) {
       // Check if agent already exists
       const existingAgent = db.prepare('SELECT id FROM agents WHERE name = ?').get(agent_name) as any;
-      
+
       if (existingAgent) {
         agentId = existingAgent.id;
       } else {
@@ -76,13 +78,14 @@ export async function POST(
       SELECT * FROM openclaw_sessions WHERE id = ?
     `).get(sessionId);
 
-    // Broadcast agent spawned event
-    broadcast({
-      type: 'agent_spawned',
+    // Broadcast session creation
+    broadcast(clientId, {
+      type: 'agent_started',
       payload: {
         taskId,
-        sessionId: openclaw_session_id,
+        sessionId,
         agentName: agent_name,
+        openclawSessionId: openclaw_session_id,
       },
     });
 
@@ -102,11 +105,12 @@ export async function POST(
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const taskId = params.id;
-    const db = getDb();
+    const { id: taskId } = await params;
+    const clientId = getClientId(request);
+    const db = getDb(clientId);
 
     const sessions = db.prepare(`
       SELECT 

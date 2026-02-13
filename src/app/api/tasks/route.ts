@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { queryAll, queryOne, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import type { Task, CreateTaskRequest, Agent } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 // GET /api/tasks - List all tasks with optional filters
 export async function GET(request: NextRequest) {
@@ -12,6 +13,7 @@ export async function GET(request: NextRequest) {
     const businessId = searchParams.get('business_id');
     const workspaceId = searchParams.get('workspace_id');
     const assignedAgentId = searchParams.get('assigned_agent_id');
+    const clientId = getClientId(request);
 
     let sql = `
       SELECT
@@ -52,17 +54,17 @@ export async function GET(request: NextRequest) {
 
     sql += ' ORDER BY t.created_at DESC';
 
-    const tasks = queryAll<Task & { assigned_agent_name?: string; assigned_agent_emoji?: string; created_by_agent_name?: string }>(sql, params);
+    const tasks = queryAll<Task & { assigned_agent_name?: string; assigned_agent_emoji?: string; created_by_agent_name?: string }>(clientId, sql, params);
 
     // Transform to include nested agent info
     const transformedTasks = tasks.map((task) => ({
       ...task,
       assigned_agent: task.assigned_agent_id
         ? {
-            id: task.assigned_agent_id,
-            name: task.assigned_agent_name,
-            avatar_emoji: task.assigned_agent_emoji,
-          }
+          id: task.assigned_agent_id,
+          name: task.assigned_agent_name,
+          avatar_emoji: task.assigned_agent_emoji,
+        }
         : undefined,
     }));
 
@@ -86,11 +88,13 @@ export async function POST(request: NextRequest) {
 
     const id = uuidv4();
     const now = new Date().toISOString();
+    const clientId = getClientId(request);
 
     const workspaceId = (body as { workspace_id?: string }).workspace_id || 'default';
     const status = (body as { status?: string }).status || 'inbox';
-    
+
     run(
+      clientId,
       `INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -112,13 +116,14 @@ export async function POST(request: NextRequest) {
     // Log event
     let eventMessage = `New task: ${body.title}`;
     if (body.created_by_agent_id) {
-      const creator = queryOne<Agent>('SELECT name FROM agents WHERE id = ?', [body.created_by_agent_id]);
+      const creator = queryOne<Agent>(clientId, 'SELECT name FROM agents WHERE id = ?', [body.created_by_agent_id]);
       if (creator) {
         eventMessage = `${creator.name} created task: ${body.title}`;
       }
     }
 
     run(
+      clientId,
       `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [uuidv4(), 'task_created', body.created_by_agent_id || null, id, eventMessage, now]
@@ -126,6 +131,7 @@ export async function POST(request: NextRequest) {
 
     // Fetch created task with all joined fields
     const task = queryOne<Task>(
+      clientId,
       `SELECT t.*,
         aa.name as assigned_agent_name,
         aa.avatar_emoji as assigned_agent_emoji,
@@ -137,15 +143,15 @@ export async function POST(request: NextRequest) {
        WHERE t.id = ?`,
       [id]
     );
-    
+
     // Broadcast task creation via SSE
     if (task) {
-      broadcast({
+      broadcast(clientId, {
         type: 'task_created',
         payload: task,
       });
     }
-    
+
     return NextResponse.json(task, { status: 201 });
   } catch (error) {
     console.error('Failed to create task:', error);

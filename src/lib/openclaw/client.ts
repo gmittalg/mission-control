@@ -21,7 +21,7 @@ export class OpenClawClient extends EventEmitter {
     super();
     this.token = token;
     // Prevent Node.js from throwing on unhandled 'error' events
-    this.on('error', () => {});
+    this.on('error', () => { });
   }
 
   async connect(): Promise<void> {
@@ -297,12 +297,32 @@ export class OpenClawClient extends EventEmitter {
   }
 }
 
-// Singleton instance for server-side usage
-let clientInstance: OpenClawClient | null = null;
+import { getClientConfig } from '../db/master';
 
-export function getOpenClawClient(): OpenClawClient {
-  if (!clientInstance) {
-    clientInstance = new OpenClawClient();
+// Singleton instance cache for multiple clients
+const clientInstances = new Map<string, OpenClawClient>();
+
+export function getOpenClawClient(clientId: string = 'default'): OpenClawClient {
+  if (clientInstances.has(clientId)) {
+    return clientInstances.get(clientId)!;
   }
-  return clientInstance;
+
+  const config = getClientConfig(clientId);
+  if (!config && clientId !== 'default') {
+    throw new Error(`Client configuration not found for ID: ${clientId}`);
+  }
+
+  const url = config?.gateway_url || GATEWAY_URL;
+  const token = config?.gateway_token || GATEWAY_TOKEN;
+
+  const client = new OpenClawClient(url, token);
+  clientInstances.set(clientId, client);
+  return client;
+}
+
+export function disconnectAllClients(): void {
+  for (const client of clientInstances.values()) {
+    client.disconnect();
+  }
+  clientInstances.clear();
 }

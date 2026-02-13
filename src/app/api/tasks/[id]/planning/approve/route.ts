@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import type { PlanningQuestion, PlanningCategory } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 // Generate markdown spec from answered questions
 function generateSpecMarkdown(task: { title: string; description?: string }, questions: PlanningQuestion[]): string {
   const lines: string[] = [];
-  
+
   lines.push(`# ${task.title}`);
   lines.push('');
   lines.push('**Status:** SPEC LOCKED ✅');
   lines.push('');
-  
+
   if (task.description) {
     lines.push('## Original Request');
     lines.push(task.description);
@@ -65,16 +66,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: taskId } = await params;
+  const clientId = getClientId(request);
 
   try {
     // Get task
-    const task = getDb().prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as { id: string; title: string; description?: string; status: string } | undefined;
+    const task = getDb(clientId).prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as { id: string; title: string; description?: string; status: string } | undefined;
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
     // Check if already locked
-    const existingSpec = getDb().prepare(
+    const existingSpec = getDb(clientId).prepare(
       'SELECT * FROM planning_specs WHERE task_id = ?'
     ).get(taskId);
 
@@ -83,14 +85,14 @@ export async function POST(
     }
 
     // Get all questions
-    const questions = getDb().prepare(
+    const questions = getDb(clientId).prepare(
       'SELECT * FROM planning_questions WHERE task_id = ? ORDER BY sort_order'
     ).all(taskId) as PlanningQuestion[];
 
     // Check if all questions are answered
     const unanswered = questions.filter(q => !q.answer);
     if (unanswered.length > 0) {
-      return NextResponse.json({ 
+      return NextResponse.json({
         error: 'All questions must be answered before locking',
         unanswered: unanswered.length
       }, { status: 400 });
@@ -107,13 +109,13 @@ export async function POST(
 
     // Create spec record
     const specId = crypto.randomUUID();
-    getDb().prepare(`
+    getDb(clientId).prepare(`
       INSERT INTO planning_specs (id, task_id, spec_markdown, locked_at)
       VALUES (?, ?, ?, datetime('now'))
     `).run(specId, taskId, specMarkdown);
 
     // Update task description with spec and move to inbox
-    getDb().prepare(`
+    getDb(clientId).prepare(`
       UPDATE tasks 
       SET description = ?, status = 'inbox', updated_at = datetime('now')
       WHERE id = ?
@@ -121,13 +123,13 @@ export async function POST(
 
     // Log activity
     const activityId = crypto.randomUUID();
-    getDb().prepare(`
+    getDb(clientId).prepare(`
       INSERT INTO task_activities (id, task_id, activity_type, message)
       VALUES (?, ?, 'status_changed', 'Planning complete - spec locked and moved to inbox')
     `).run(activityId, taskId);
 
     // Get the created spec
-    const spec = getDb().prepare(
+    const spec = getDb(clientId).prepare(
       'SELECT * FROM planning_specs WHERE id = ?'
     ).get(specId);
 

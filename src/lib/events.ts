@@ -5,44 +5,63 @@
 
 import type { SSEEvent } from './types';
 
-// Store active SSE client connections
-const clients = new Set<ReadableStreamDefaultController>();
+// Store active SSE client connections per clientId
+const clients = new Map<string, Set<ReadableStreamDefaultController>>();
 
 /**
  * Register a new SSE client connection
  */
-export function registerClient(controller: ReadableStreamDefaultController): void {
-  clients.add(controller);
+export function registerClient(clientId: string, controller: ReadableStreamDefaultController): void {
+  if (!clients.has(clientId)) {
+    clients.set(clientId, new Set());
+  }
+  clients.get(clientId)!.add(controller);
 }
 
 /**
  * Unregister an SSE client connection
  */
-export function unregisterClient(controller: ReadableStreamDefaultController): void {
-  clients.delete(controller);
+export function unregisterClient(clientId: string, controller: ReadableStreamDefaultController): void {
+  const clientSet = clients.get(clientId);
+  if (clientSet) {
+    clientSet.delete(controller);
+    if (clientSet.size === 0) {
+      clients.delete(clientId);
+    }
+  }
 }
 
 /**
- * Broadcast an event to all connected SSE clients
+ * Broadcast an event to all connected SSE clients for a specific client
  */
-export function broadcast(event: SSEEvent): void {
+export function broadcast(clientId: string, event: SSEEvent): void {
   const encoder = new TextEncoder();
   const data = `data: ${JSON.stringify(event)}\n\n`;
   const encoded = encoder.encode(data);
 
-  // Send to all connected clients
-  const clientsArray = Array.from(clients);
+  const clientSet = clients.get(clientId);
+  if (!clientSet) {
+    console.log(`[SSE] No clients connected for client ${clientId}, skipping broadcast of ${event.type}`);
+    return;
+  }
+
+  // Send to all connected clients for this clientId
+  const clientsArray = Array.from(clientSet);
   for (const client of clientsArray) {
     try {
       client.enqueue(encoded);
     } catch (error) {
       // Client disconnected, remove it
-      console.error('Failed to send SSE event to client:', error);
-      clients.delete(client);
+      console.error(`Failed to send SSE event to client for ${clientId}:`, error);
+      clientSet.delete(client);
     }
   }
 
-  console.log(`[SSE] Broadcast ${event.type} to ${clients.size} client(s)`);
+  if (clientSet.size === 0) {
+    clients.delete(clientId);
+  }
+
+  console.log(`[SSE] Broadcast ${event.type} to ${clientSet.size} client(s) for ${clientId}`);
 }
 
 /**

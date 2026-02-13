@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
+import { getClientId } from '@/lib/api-utils';
 
 // Helper to extract JSON from a response that might have markdown code blocks or surrounding text
 function extractJSON(text: string): object | null {
@@ -36,20 +37,20 @@ function extractJSON(text: string): object | null {
 }
 
 // Helper to get messages from OpenClaw API
-async function getMessagesFromOpenClaw(sessionKey: string): Promise<Array<{ role: string; content: string }>> {
+async function getMessagesFromOpenClaw(clientId: string, sessionKey: string): Promise<Array<{ role: string; content: string }>> {
   try {
-    const client = getOpenClawClient();
+    const client = getOpenClawClient(clientId);
     if (!client.isConnected()) {
       await client.connect();
     }
-    
+
     const result = await client.call<{ messages: Array<{ role: string; content: Array<{ type: string; text?: string }> }> }>('chat.history', {
       sessionKey,
       limit: 50,
     });
-    
+
     const messages: Array<{ role: string; content: string }> = [];
-    
+
     for (const msg of result.messages || []) {
       if (msg.role === 'assistant') {
         const textContent = msg.content?.find((c) => c.type === 'text');
@@ -58,7 +59,7 @@ async function getMessagesFromOpenClaw(sessionKey: string): Promise<Array<{ role
         }
       }
     }
-    
+
     return messages;
   } catch (err) {
     console.error('[Planning] Failed to get messages from OpenClaw:', err);
@@ -72,6 +73,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: taskId } = await params;
+  const clientId = getClientId(request);
 
   try {
     const body = await request.json();
@@ -82,7 +84,7 @@ export async function POST(
     }
 
     // Get task
-    const task = getDb().prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
+    const task = getDb(clientId).prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
       id: string;
       title: string;
       description: string;
@@ -99,7 +101,7 @@ export async function POST(
     }
 
     // Build the answer message
-    const answerText = answer === 'other' && otherText 
+    const answerText = answer === 'other' && otherText
       ? `Other: ${otherText}`
       : answer;
 
@@ -149,7 +151,7 @@ If planning is complete, respond with JSON:
     messages.push({ role: 'user', content: answerText, timestamp: Date.now() });
 
     // Connect to OpenClaw and send the answer
-    const client = getOpenClawClient();
+    const client = getOpenClawClient(clientId);
     if (!client.isConnected()) {
       await client.connect();
     }
@@ -161,21 +163,21 @@ If planning is complete, respond with JSON:
     });
 
     // Update messages in DB
-    getDb().prepare(`
+    getDb(clientId).prepare(`
       UPDATE tasks SET planning_messages = ? WHERE id = ?
     `).run(JSON.stringify(messages), taskId);
 
     // Poll for response via OpenClaw API
     let response = null;
-    const initialMessages = await getMessagesFromOpenClaw(task.planning_session_key!);
+    const initialMessages = await getMessagesFromOpenClaw(clientId, task.planning_session_key!);
     const initialMsgCount = initialMessages.length;
-    
+
     for (let i = 0; i < 30; i++) {
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      const transcriptMessages = await getMessagesFromOpenClaw(task.planning_session_key!);
+      const transcriptMessages = await getMessagesFromOpenClaw(clientId, task.planning_session_key!);
       console.log('[Planning] Answer poll - API messages:', transcriptMessages.length, 'initial:', initialMsgCount);
-      
+
       // Check if there's a new assistant message
       if (transcriptMessages.length > initialMsgCount) {
         const lastAssistant = [...transcriptMessages].reverse().find(m => m.role === 'assistant');
@@ -208,7 +210,7 @@ If planning is complete, respond with JSON:
       if (parsed) {
         // Check if planning is complete
         if (parsed.status === 'complete') {
-          getDb().prepare(`
+          getDb(clientId).prepare(`
             UPDATE tasks 
             SET planning_messages = ?, 
                 planning_complete = 1,
@@ -225,9 +227,9 @@ If planning is complete, respond with JSON:
 
           // Create the agents in the workspace and track first agent for auto-assign
           let firstAgentId: string | null = null;
-          
+
           if (parsed.agents && parsed.agents.length > 0) {
-            const insertAgent = getDb().prepare(`
+            const insertAgent = getDb(clientId).prepare(`
               INSERT INTO agents (id, workspace_id, name, role, description, avatar_emoji, status, soul_md, created_at, updated_at)
               VALUES (?, (SELECT workspace_id FROM tasks WHERE id = ?), ?, ?, ?, ?, 'standby', ?, datetime('now'), datetime('now'))
             `);
@@ -235,7 +237,7 @@ If planning is complete, respond with JSON:
             for (const agent of parsed.agents) {
               const agentId = crypto.randomUUID();
               if (!firstAgentId) firstAgentId = agentId;
-              
+
               insertAgent.run(
                 agentId,
                 taskId,
@@ -251,7 +253,7 @@ If planning is complete, respond with JSON:
           // AUTO-DISPATCH: Assign to first agent and trigger dispatch
           if (firstAgentId) {
             // Assign task to the first created agent
-            getDb().prepare(`
+            getDb(clientId).prepare(`
               UPDATE tasks SET assigned_agent_id = ? WHERE id = ?
             `).run(firstAgentId, taskId);
 
@@ -260,13 +262,16 @@ If planning is complete, respond with JSON:
             // Trigger dispatch - use localhost since we're in the same process
             const dispatchUrl = `http://localhost:${process.env.PORT || 3000}/api/tasks/${taskId}/dispatch`;
             console.log(`[Planning] Triggering dispatch: ${dispatchUrl}`);
-            
+
             try {
               const dispatchRes = await fetch(dispatchUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Client-Id': clientId
+                },
               });
-              
+
               if (dispatchRes.ok) {
                 const dispatchData = await dispatchRes.json();
                 console.log(`[Planning] Dispatch successful:`, dispatchData);
@@ -291,7 +296,7 @@ If planning is complete, respond with JSON:
 
         // Not complete, return next question if it has one
         if (parsed.question) {
-          getDb().prepare(`
+          getDb(clientId).prepare(`
             UPDATE tasks SET planning_messages = ? WHERE id = ?
           `).run(JSON.stringify(messages), taskId);
 
@@ -302,9 +307,9 @@ If planning is complete, respond with JSON:
           });
         }
       }
-      
+
       // Response wasn't valid JSON or didn't have expected structure
-      getDb().prepare(`
+      getDb(clientId).prepare(`
         UPDATE tasks SET planning_messages = ? WHERE id = ?
       `).run(JSON.stringify(messages), taskId);
 

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
+import { getClientId } from '@/lib/api-utils';
 
 // Base directory for all project files - must match upload endpoint
 // Set via PROJECTS_PATH env var (e.g., ~/projects or /var/www/projects)
@@ -47,16 +48,18 @@ export async function GET(request: NextRequest) {
     const fullPathParam = searchParams.get('path');
     const relativePathParam = searchParams.get('relativePath');
     const raw = searchParams.get('raw') === 'true';
+    const clientId = getClientId(request);
+    const clientBase = path.join(PROJECTS_BASE, clientId === 'default' ? '' : clientId);
 
     // Determine the target path
     let targetPath: string;
 
     if (fullPathParam) {
-      // Full path provided - validate it's under PROJECTS_BASE
+      // Full path provided - validate it's under clientBase
       const normalizedPath = path.normalize(fullPathParam);
-      if (!normalizedPath.startsWith(PROJECTS_BASE)) {
+      if (!normalizedPath.startsWith(clientBase)) {
         return NextResponse.json(
-          { error: 'Access denied: path must be within projects directory' },
+          { error: 'Access denied: path must be within projects directory for this client' },
           { status: 403 }
         );
       }
@@ -70,7 +73,7 @@ export async function GET(request: NextRequest) {
           { status: 400 }
         );
       }
-      targetPath = path.join(PROJECTS_BASE, normalizedRelative);
+      targetPath = path.join(clientBase, normalizedRelative);
     } else {
       return NextResponse.json(
         { error: 'Either path or relativePath query parameter is required' },
@@ -99,9 +102,9 @@ export async function GET(request: NextRequest) {
     const ext = path.extname(targetPath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
     const isText = contentType.startsWith('text/') ||
-                   contentType === 'application/json' ||
-                   contentType === 'application/javascript' ||
-                   contentType === 'application/xml';
+      contentType === 'application/json' ||
+      contentType === 'application/javascript' ||
+      contentType === 'application/xml';
 
     // Read file
     const content = readFileSync(targetPath, isText ? 'utf-8' : undefined);
@@ -123,7 +126,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       path: targetPath,
-      relativePath: path.relative(PROJECTS_BASE, targetPath),
+      relativePath: path.relative(clientBase, targetPath),
       size: stats.size,
       contentType,
       content: isText ? content : Buffer.from(content).toString('base64'),

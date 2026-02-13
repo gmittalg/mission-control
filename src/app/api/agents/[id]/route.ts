@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, run } from '@/lib/db';
 import type { Agent, UpdateAgentRequest } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 // GET /api/agents/[id] - Get a single agent
 export async function GET(
@@ -10,7 +11,8 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const agent = queryOne<Agent>('SELECT * FROM agents WHERE id = ?', [id]);
+    const clientId = getClientId(request);
+    const agent = queryOne<Agent>(clientId, 'SELECT * FROM agents WHERE id = ?', [id]);
 
     if (!agent) {
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
@@ -30,9 +32,10 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const clientId = getClientId(request);
     const body: UpdateAgentRequest = await request.json();
 
-    const existing = queryOne<Agent>('SELECT * FROM agents WHERE id = ?', [id]);
+    const existing = queryOne<Agent>(clientId, 'SELECT * FROM agents WHERE id = ?', [id]);
     if (!existing) {
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     }
@@ -63,6 +66,7 @@ export async function PATCH(
       // Log status change event
       const now = new Date().toISOString();
       run(
+        clientId,
         `INSERT INTO events (id, type, agent_id, message, created_at)
          VALUES (?, ?, ?, ?, ?)`,
         [uuidv4(), 'agent_status_changed', id, `${existing.name} is now ${body.status}`, now]
@@ -93,9 +97,9 @@ export async function PATCH(
     values.push(new Date().toISOString());
     values.push(id);
 
-    run(`UPDATE agents SET ${updates.join(', ')} WHERE id = ?`, values);
+    run(clientId, `UPDATE agents SET ${updates.join(', ')} WHERE id = ?`, values);
 
-    const agent = queryOne<Agent>('SELECT * FROM agents WHERE id = ?', [id]);
+    const agent = queryOne<Agent>(clientId, 'SELECT * FROM agents WHERE id = ?', [id]);
     return NextResponse.json(agent);
   } catch (error) {
     console.error('Failed to update agent:', error);
@@ -110,23 +114,24 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const existing = queryOne<Agent>('SELECT * FROM agents WHERE id = ?', [id]);
+    const clientId = getClientId(request);
+    const existing = queryOne<Agent>(clientId, 'SELECT * FROM agents WHERE id = ?', [id]);
 
     if (!existing) {
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     }
 
     // Delete or nullify related records first (foreign key constraints)
-    run('DELETE FROM openclaw_sessions WHERE agent_id = ?', [id]);
-    run('DELETE FROM events WHERE agent_id = ?', [id]);
-    run('DELETE FROM messages WHERE sender_agent_id = ?', [id]);
-    run('DELETE FROM conversation_participants WHERE agent_id = ?', [id]);
-    run('UPDATE tasks SET assigned_agent_id = NULL WHERE assigned_agent_id = ?', [id]);
-    run('UPDATE tasks SET created_by_agent_id = NULL WHERE created_by_agent_id = ?', [id]);
-    run('UPDATE task_activities SET agent_id = NULL WHERE agent_id = ?', [id]);
+    run(clientId, 'DELETE FROM openclaw_sessions WHERE agent_id = ?', [id]);
+    run(clientId, 'DELETE FROM events WHERE agent_id = ?', [id]);
+    run(clientId, 'DELETE FROM messages WHERE sender_agent_id = ?', [id]);
+    run(clientId, 'DELETE FROM conversation_participants WHERE agent_id = ?', [id]);
+    run(clientId, 'UPDATE tasks SET assigned_agent_id = NULL WHERE assigned_agent_id = ?', [id]);
+    run(clientId, 'UPDATE tasks SET created_by_agent_id = NULL WHERE created_by_agent_id = ?', [id]);
+    run(clientId, 'UPDATE task_activities SET agent_id = NULL WHERE agent_id = ?', [id]);
 
     // Now delete the agent
-    run('DELETE FROM agents WHERE id = ?', [id]);
+    run(clientId, 'DELETE FROM agents WHERE id = ?', [id]);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryAll, run } from '@/lib/db';
 import type { Event } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 // GET /api/events - List events (live feed)
 export async function GET(request: NextRequest) {
@@ -9,6 +10,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     const since = searchParams.get('since'); // ISO timestamp for polling
+    const clientId = getClientId(request);
 
     let sql = `
       SELECT e.*, a.name as agent_name, a.avatar_emoji as agent_emoji, t.title as task_title
@@ -27,23 +29,23 @@ export async function GET(request: NextRequest) {
     sql += ' ORDER BY e.created_at DESC LIMIT ?';
     params.push(limit);
 
-    const events = queryAll<Event & { agent_name?: string; agent_emoji?: string; task_title?: string }>(sql, params);
+    const events = queryAll<Event & { agent_name?: string; agent_emoji?: string; task_title?: string }>(clientId, sql, params);
 
     // Transform to include nested info
     const transformedEvents = events.map((event) => ({
       ...event,
       agent: event.agent_id
         ? {
-            id: event.agent_id,
-            name: event.agent_name,
-            avatar_emoji: event.agent_emoji,
-          }
+          id: event.agent_id,
+          name: event.agent_name,
+          avatar_emoji: event.agent_emoji,
+        }
         : undefined,
       task: event.task_id
         ? {
-            id: event.task_id,
-            title: event.task_title,
-          }
+          id: event.task_id,
+          title: event.task_title,
+        }
         : undefined,
     }));
 
@@ -65,8 +67,10 @@ export async function POST(request: NextRequest) {
 
     const id = uuidv4();
     const now = new Date().toISOString();
+    const clientId = getClientId(request);
 
     run(
+      clientId,
       `INSERT INTO events (id, type, agent_id, task_id, message, metadata, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [

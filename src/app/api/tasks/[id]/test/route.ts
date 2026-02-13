@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync } from 'fs';
 import path from 'path';
 import * as csstree from 'css-tree';
 import type { Task, TaskDeliverable } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 interface CssValidationError {
   message: string;
@@ -79,15 +80,17 @@ export async function POST(
 
   try {
     const { id: taskId } = await params;
+    const clientId = getClientId(request);
 
     // Get task
-    const task = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
+    const task = queryOne<Task>(clientId, 'SELECT * FROM tasks WHERE id = ?', [taskId]);
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
     // Get all deliverables (file and url types)
     const deliverables = queryAll<TaskDeliverable>(
+      clientId,
       'SELECT * FROM task_deliverables WHERE task_id = ? AND deliverable_type IN (?, ?)',
       [taskId, 'file', 'url']
     );
@@ -141,6 +144,7 @@ export async function POST(
       : `Automated test failed - ${summary}`;
 
     run(
+      clientId,
       `INSERT INTO task_activities (id, task_id, activity_type, message, metadata, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [
@@ -148,15 +152,17 @@ export async function POST(
         taskId,
         passed ? 'test_passed' : 'test_failed',
         activityMessage,
-        JSON.stringify({ results: results.map(r => ({
-          deliverable: r.deliverable.title,
-          type: r.deliverable.type,
-          passed: r.passed,
-          consoleErrors: r.consoleErrors.length,
-          cssErrors: r.cssErrors.length,
-          resourceErrors: r.resourceErrors.length,
-          screenshot: r.screenshotPath
-        })) }),
+        JSON.stringify({
+          results: results.map(r => ({
+            deliverable: r.deliverable.title,
+            type: r.deliverable.type,
+            passed: r.passed,
+            consoleErrors: r.consoleErrors.length,
+            cssErrors: r.cssErrors.length,
+            resourceErrors: r.resourceErrors.length,
+            screenshot: r.screenshotPath
+          }))
+        }),
         new Date().toISOString()
       ]
     );
@@ -168,12 +174,14 @@ export async function POST(
     if (passed) {
       // Tests passed -> move to review for human approval
       run(
+        clientId,
         'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         ['review', now, taskId]
       );
       newStatus = 'review';
 
       run(
+        clientId,
         `INSERT INTO task_activities (id, task_id, activity_type, message, created_at)
          VALUES (?, ?, ?, ?, ?)`,
         [
@@ -187,12 +195,14 @@ export async function POST(
     } else {
       // Tests failed -> move back to assigned for agent to fix
       run(
+        clientId,
         'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         ['assigned', now, taskId]
       );
       newStatus = 'assigned';
 
       run(
+        clientId,
         `INSERT INTO task_activities (id, task_id, activity_type, message, created_at)
          VALUES (?, ?, ?, ?, ?)`,
         [
@@ -489,13 +499,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: taskId } = await params;
+  const clientId = getClientId(request);
 
-  const task = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  const task = queryOne<Task>(clientId, 'SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!task) {
     return NextResponse.json({ error: 'Task not found' }, { status: 404 });
   }
 
   const deliverables = queryAll<TaskDeliverable>(
+    clientId,
     'SELECT * FROM task_deliverables WHERE task_id = ? AND deliverable_type IN (?, ?)',
     [taskId, 'file', 'url']
   );

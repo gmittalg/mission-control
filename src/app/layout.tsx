@@ -9,6 +9,8 @@ export const metadata: Metadata = {
   },
 };
 
+import { ClientProvider } from '@/context/ClientContext';
+
 export default function RootLayout({
   children,
 }: {
@@ -22,7 +24,11 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="bg-mc-bg text-mc-text min-h-screen">{children}</body>
+      <body className="bg-mc-bg text-mc-text min-h-screen">
+        <ClientProvider>
+          {children}
+        </ClientProvider>
+      </body>
     </html>
   );
 }

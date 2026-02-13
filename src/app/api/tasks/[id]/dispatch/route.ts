@@ -5,23 +5,21 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/**
- * POST /api/tasks/[id]/dispatch
- * 
- * Dispatches a task to its assigned agent's OpenClaw session.
- * Creates session if needed, sends task details to agent.
- */
+// POST /api/tasks/[id]/dispatch
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const clientId = getClientId(request);
 
     // Get task with agent info
     const task = queryOne<Task & { assigned_agent_name?: string }>(
+      clientId,
       `SELECT t.*, a.name as assigned_agent_name, a.is_master
        FROM tasks t
        LEFT JOIN agents a ON t.assigned_agent_id = a.id
@@ -42,6 +40,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Get agent details
     const agent = queryOne<Agent>(
+      clientId,
       'SELECT * FROM agents WHERE id = ?',
       [task.assigned_agent_id]
     );
@@ -51,7 +50,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     // Connect to OpenClaw Gateway
-    const client = getOpenClawClient();
+    const client = getOpenClawClient(clientId);
     if (!client.isConnected()) {
       try {
         await client.connect();
@@ -66,6 +65,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Get or create OpenClaw session for this agent
     let session = queryOne<OpenClawSession>(
+      clientId,
       'SELECT * FROM openclaw_sessions WHERE agent_id = ? AND status = ?',
       [agent.id, 'active']
     );
@@ -76,20 +76,23 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       // Create session record
       const sessionId = uuidv4();
       const openclawSessionId = `mission-control-${agent.name.toLowerCase().replace(/\s+/g, '-')}`;
-      
+
       run(
+        clientId,
         `INSERT INTO openclaw_sessions (id, agent_id, openclaw_session_id, channel, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [sessionId, agent.id, openclawSessionId, 'mission-control', 'active', now, now]
       );
 
       session = queryOne<OpenClawSession>(
+        clientId,
         'SELECT * FROM openclaw_sessions WHERE id = ?',
         [sessionId]
       );
 
       // Log session creation
       run(
+        clientId,
         `INSERT INTO events (id, type, agent_id, message, created_at)
          VALUES (?, ?, ?, ?, ?)`,
         [uuidv4(), 'agent_status_changed', agent.id, `${agent.name} session created`, now]
@@ -129,11 +132,11 @@ ${task.due_date ? `**Due:** ${task.due_date}\n` : ''}
 Create this directory and save all deliverables there.
 
 **IMPORTANT:** After completing work, you MUST call these APIs:
-1. Log activity: POST ${missionControlUrl}/api/tasks/${task.id}/activities
+1. Log activity: POST ${missionControlUrl}/api/tasks/${task.id}/activities?clientId=${clientId}
    Body: {"activity_type": "completed", "message": "Description of what was done"}
-2. Register deliverable: POST ${missionControlUrl}/api/tasks/${task.id}/deliverables
+2. Register deliverable: POST ${missionControlUrl}/api/tasks/${task.id}/deliverables?clientId=${clientId}
    Body: {"deliverable_type": "file", "title": "File name", "path": "${taskProjectDir}/filename.html"}
-3. Update status: PATCH ${missionControlUrl}/api/tasks/${task.id}
+3. Update status: PATCH ${missionControlUrl}/api/tasks/${task.id}?clientId=${clientId}
    Body: {"status": "review"}
 
 When complete, reply with:
@@ -154,27 +157,33 @@ If you need help or clarification, ask me (Charlie).`;
 
       // Update task status to in_progress
       run(
+        clientId,
         'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         ['in_progress', now, id]
       );
 
       // Broadcast task update
-      const updatedTask = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
-      if (updatedTask) {
-        broadcast({
-          type: 'task_updated',
-          payload: updatedTask,
-        });
-      }
+      const updatedTask = queryOne<Task>(clientId, 'SELECT * FROM tasks WHERE id = ?', [id]);
+      broadcast(clientId, {
+        type: 'task_dispatched',
+        payload: {
+          taskId: task.id,
+          sessionId: 'direct', // Or some other identifier if needed
+          agentId: agent.id,
+          agentName: agent.name
+        }
+      });
 
       // Update agent status to working
       run(
+        clientId,
         'UPDATE agents SET status = ?, updated_at = ? WHERE id = ?',
         ['working', now, agent.id]
       );
 
       // Log dispatch event
       run(
+        clientId,
         `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [

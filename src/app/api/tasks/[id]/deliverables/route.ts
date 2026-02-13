@@ -9,6 +9,7 @@ import { broadcast } from '@/lib/events';
 import { existsSync } from 'fs';
 import path from 'path';
 import type { TaskDeliverable } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 /**
  * GET /api/tasks/[id]/deliverables
@@ -16,11 +17,12 @@ import type { TaskDeliverable } from '@/lib/types';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const taskId = params.id;
-    const db = getDb();
+    const { id: taskId } = await params;
+    const clientId = getClientId(request);
+    const db = getDb(clientId);
 
     const deliverables = db.prepare(`
       SELECT *
@@ -45,12 +47,13 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const taskId = params.id;
+    const { id: taskId } = await params;
+    const clientId = getClientId(request);
     const body = await request.json();
-    
+
     const { deliverable_type, title, path, description } = body;
 
     if (!deliverable_type || !title) {
@@ -72,7 +75,7 @@ export async function POST(
       }
     }
 
-    const db = getDb();
+    const db = getDb(clientId);
     const id = crypto.randomUUID();
 
     // Insert deliverable
@@ -95,10 +98,10 @@ export async function POST(
       WHERE id = ?
     `).get(id) as TaskDeliverable;
 
-    // Broadcast to SSE clients
-    broadcast({
+    // Broadcast deliverable registration
+    broadcast(clientId, {
       type: 'deliverable_added',
-      payload: deliverable,
+      payload: deliverable
     });
 
     // Return with warning if file doesn't exist

@@ -168,7 +168,7 @@ export interface TaskDeliverable {
 // Planning types
 export type PlanningQuestionType = 'multiple_choice' | 'text' | 'yes_no';
 
-export type PlanningCategory = 
+export type PlanningCategory =
   | 'goal'
   | 'audience'
   | 'scope'
@@ -291,14 +291,18 @@ export type SSEEventType =
   | 'activity_logged'
   | 'deliverable_added'
   | 'agent_spawned'
-  | 'agent_completed';
+  | 'agent_started' // For new subagents
+  | 'agent_completed'
+  | 'task_dispatched';
 
 export interface SSEEvent {
   type: SSEEventType;
   payload: Task | TaskActivity | TaskDeliverable | {
     taskId: string;
     sessionId: string;
+    agentId?: string;
     agentName?: string;
+    openclawSessionId?: string;
     summary?: string;
     deleted?: boolean;
   } | {

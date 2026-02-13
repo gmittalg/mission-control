@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { queryAll } from '@/lib/db';
 import type { OpenClawSession } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 // GET /api/openclaw/sessions - List OpenClaw sessions
 export async function GET(request: NextRequest) {
@@ -9,6 +10,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const sessionType = searchParams.get('session_type');
     const status = searchParams.get('status');
+    const clientId = getClientId(request);
 
     // If filtering by database fields, query the database
     if (sessionType || status) {
@@ -27,12 +29,12 @@ export async function GET(request: NextRequest) {
 
       sql += ' ORDER BY created_at DESC';
 
-      const sessions = queryAll<OpenClawSession>(sql, params);
+      const sessions = queryAll<OpenClawSession>(clientId, sql, params);
       return NextResponse.json(sessions);
     }
 
     // Otherwise, query OpenClaw Gateway for live sessions
-    const client = getOpenClawClient();
+    const client = getOpenClawClient(clientId);
 
     if (!client.isConnected()) {
       try {
@@ -69,7 +71,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const client = getOpenClawClient();
+    const clientId = getClientId(request as unknown as NextRequest);
+    const client = getOpenClawClient(clientId);
 
     if (!client.isConnected()) {
       try {

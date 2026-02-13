@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
+import { getClientId } from '@/lib/api-utils';
 
 // Base directory for all uploaded project files
 // Set via PROJECTS_PATH env var (e.g., ~/projects or /var/www/projects)
@@ -30,6 +31,8 @@ export async function POST(request: NextRequest) {
   try {
     const body: UploadRequest = await request.json();
     const { relativePath, content, encoding = 'utf-8' } = body;
+    const clientId = getClientId(request);
+    const clientBase = path.join(PROJECTS_BASE, clientId === 'default' ? '' : clientId);
 
     if (!relativePath || content === undefined) {
       return NextResponse.json(
@@ -48,11 +51,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Build full path
-    const fullPath = path.join(PROJECTS_BASE, normalizedPath);
+    const fullPath = path.join(clientBase, normalizedPath);
 
     // Ensure base directory exists
-    if (!existsSync(PROJECTS_BASE)) {
-      mkdirSync(PROJECTS_BASE, { recursive: true });
+    if (!existsSync(clientBase)) {
+      mkdirSync(clientBase, { recursive: true });
     }
 
     // Ensure parent directory exists

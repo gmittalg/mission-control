@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
+import { broadcast } from '@/lib/events';
 
 /**
  * POST /api/webhooks/agent-completion
@@ -23,10 +25,12 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const now = new Date().toISOString();
+    const clientId = getClientId(request);
 
     // Handle direct task_id completion
     if (body.task_id) {
       const task = queryOne<Task & { assigned_agent_name?: string }>(
+        clientId,
         `SELECT t.*, a.name as assigned_agent_name
          FROM tasks t
          LEFT JOIN agents a ON t.assigned_agent_id = a.id
@@ -42,6 +46,7 @@ export async function POST(request: NextRequest) {
       // (Don't overwrite user's approval or testing results)
       if (task.status !== 'testing' && task.status !== 'review' && task.status !== 'done') {
         run(
+          clientId,
           'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
           ['testing', now, task.id]
         );
@@ -49,6 +54,7 @@ export async function POST(request: NextRequest) {
 
       // Log completion
       run(
+        clientId,
         `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [
@@ -64,10 +70,21 @@ export async function POST(request: NextRequest) {
       // Set agent back to standby
       if (task.assigned_agent_id) {
         run(
+          clientId,
           'UPDATE agents SET status = ?, updated_at = ? WHERE id = ?',
           ['standby', now, task.assigned_agent_id]
         );
       }
+
+      // Broadcast completion
+      broadcast(clientId, {
+        type: 'agent_completed',
+        payload: {
+          taskId: task.id,
+          sessionId: 'direct',
+          summary: body.summary || 'Task finished'
+        }
+      });
 
       return NextResponse.json({
         success: true,
@@ -92,6 +109,7 @@ export async function POST(request: NextRequest) {
 
       // Find agent by session
       const session = queryOne<OpenClawSession>(
+        clientId,
         'SELECT * FROM openclaw_sessions WHERE openclaw_session_id = ? AND status = ?',
         [body.session_id, 'active']
       );
@@ -105,6 +123,7 @@ export async function POST(request: NextRequest) {
 
       // Find active task for this agent
       const task = queryOne<Task & { assigned_agent_name?: string }>(
+        clientId,
         `SELECT t.*, a.name as assigned_agent_name
          FROM tasks t
          LEFT JOIN agents a ON t.assigned_agent_id = a.id
@@ -126,6 +145,7 @@ export async function POST(request: NextRequest) {
       // (Don't overwrite user's approval or testing results)
       if (task.status !== 'testing' && task.status !== 'review' && task.status !== 'done') {
         run(
+          clientId,
           'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
           ['testing', now, task.id]
         );
@@ -133,6 +153,7 @@ export async function POST(request: NextRequest) {
 
       // Log completion with summary
       run(
+        clientId,
         `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [
@@ -147,9 +168,20 @@ export async function POST(request: NextRequest) {
 
       // Set agent back to standby
       run(
+        clientId,
         'UPDATE agents SET status = ?, updated_at = ? WHERE id = ?',
         ['standby', now, session.agent_id]
       );
+
+      // Broadcast completion
+      broadcast(clientId, {
+        type: 'agent_completed',
+        payload: {
+          taskId: task.id,
+          sessionId: session.id,
+          summary
+        }
+      });
 
       return NextResponse.json({
         success: true,
@@ -174,14 +206,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * GET /api/webhooks/agent-completion
- * 
- * Returns webhook status and recent completions
- */
-export async function GET() {
+// GET /api/webhooks/agent-completion - Returns webhook status and recent completions
+export async function GET(request: NextRequest) {
   try {
+    const clientId = getClientId(request);
     const recentCompletions = queryAll(
+      clientId,
       `SELECT e.*, a.name as agent_name, t.title as task_title
        FROM events e
        LEFT JOIN agents a ON e.agent_id = a.id

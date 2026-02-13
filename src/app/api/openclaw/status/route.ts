@@ -1,10 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getOpenClawClient } from '@/lib/openclaw/client';
+import { getClientId } from '@/lib/api-utils';
 
 // GET /api/openclaw/status - Check OpenClaw connection status
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const client = getOpenClawClient();
+    const clientId = getClientId(request);
+    const client = getOpenClawClient(clientId);
 
     if (!client.isConnected()) {
       try {

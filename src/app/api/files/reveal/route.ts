@@ -8,6 +8,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync } from 'fs';
 import path from 'path';
+import { getClientId } from '@/lib/api-utils';
 
 const execAsync = promisify(exec);
 
@@ -21,14 +22,15 @@ export async function POST(request: NextRequest) {
 
     // Expand tilde
     const expandedPath = filePath.replace(/^~/, process.env.HOME || '');
+    const clientId = getClientId(request);
+    const normalizedPath = path.normalize(expandedPath);
 
-    // Security: Ensure path is within allowed directories (from env config)
+    // Security: Ensure path is within allowed directories (from env config), scoped by clientId for projects
     const allowedPaths = [
       process.env.WORKSPACE_BASE_PATH?.replace(/^~/, process.env.HOME || ''),
-      process.env.PROJECTS_PATH?.replace(/^~/, process.env.HOME || ''),
+      path.join(process.env.PROJECTS_PATH?.replace(/^~/, process.env.HOME || '') || '', clientId === 'default' ? '' : clientId),
     ].filter(Boolean) as string[];
 
-    const normalizedPath = path.normalize(expandedPath);
     const isAllowed = allowedPaths.some(allowed =>
       normalizedPath.startsWith(path.normalize(allowed))
     );

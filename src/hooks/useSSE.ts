@@ -10,7 +10,10 @@ import { useMissionControl } from '@/lib/store';
 import { debug } from '@/lib/debug';
 import type { SSEEvent, Task } from '@/lib/types';
 
+import { useClient } from '@/context/ClientContext';
+
 export function useSSE() {
+  const { activeClientId } = useClient();
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
   const {
@@ -25,14 +28,14 @@ export function useSSE() {
     let isConnecting = false;
 
     const connect = () => {
-      if (isConnecting || eventSourceRef.current?.readyState === EventSource.OPEN) {
+      if (isConnecting || (eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN)) {
         return;
       }
 
       isConnecting = true;
-      debug.sse('Connecting to event stream...');
+      debug.sse(`Connecting to event stream for client: ${activeClientId}...`);
 
-      const eventSource = new EventSource('/api/events/stream');
+      const eventSource = new EventSource(`/api/events/stream?clientId=${activeClientId}`);
       eventSourceRef.current = eventSource;
 
       eventSource.onopen = () => {
@@ -135,5 +138,5 @@ export function useSSE() {
         clearTimeout(reconnectTimeoutRef.current);
       }
     };
-  }, [addTask, updateTask, setIsOnline, selectedTask, setSelectedTask]);
+  }, [activeClientId, addTask, updateTask, setIsOnline, selectedTask, setSelectedTask]);
 }

@@ -7,6 +7,7 @@ import { Zap, Settings, ChevronLeft, LayoutGrid } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { format } from 'date-fns';
 import type { Workspace } from '@/lib/types';
+import { ClientSwitcher } from './ClientSwitcher';
 
 interface HeaderProps {
   workspace?: Workspace;
@@ -106,19 +107,18 @@ export function Header({ workspace }: HeaderProps) {
           {format(currentTime, 'HH:mm:ss')}
         </span>
         <div
-          className={`flex items-center gap-2 px-3 py-1 rounded border text-sm font-medium ${
-            isOnline
+          className={`flex items-center gap-2 px-3 py-1 rounded border text-sm font-medium ${isOnline
               ? 'bg-mc-accent-green/20 border-mc-accent-green text-mc-accent-green'
               : 'bg-mc-accent-red/20 border-mc-accent-red text-mc-accent-red'
-          }`}
+            }`}
         >
           <span
-            className={`w-2 h-2 rounded-full ${
-              isOnline ? 'bg-mc-accent-green animate-pulse' : 'bg-mc-accent-red'
-            }`}
+            className={`w-2 h-2 rounded-full ${isOnline ? 'bg-mc-accent-green animate-pulse' : 'bg-mc-accent-red'
+              }`}
           />
           {isOnline ? 'ONLINE' : 'OFFLINE'}
         </div>
+        <ClientSwitcher />
         <button
           onClick={() => router.push('/settings')}
           className="p-2 hover:bg-mc-bg-tertiary rounded text-mc-text-secondary"

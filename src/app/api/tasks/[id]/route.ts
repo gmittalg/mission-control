@@ -4,6 +4,7 @@ import { queryOne, run, queryAll } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { getMissionControlUrl } from '@/lib/config';
 import type { Task, UpdateTaskRequest, Agent, TaskDeliverable } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 // GET /api/tasks/[id] - Get a single task
 export async function GET(
@@ -12,7 +13,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const clientId = getClientId(request);
     const task = queryOne<Task>(
+      clientId,
       `SELECT t.*,
         aa.name as assigned_agent_name,
         aa.avatar_emoji as assigned_agent_emoji
@@ -40,9 +43,10 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const clientId = getClientId(request);
     const body: UpdateTaskRequest & { updated_by_agent_id?: string } = await request.json();
 
-    const existing = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+    const existing = queryOne<Task>(clientId, 'SELECT * FROM tasks WHERE id = ?', [id]);
     if (!existing) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
@@ -56,6 +60,7 @@ export async function PATCH(
     // User-initiated moves (no agent ID) are allowed
     if (body.status === 'done' && existing.status === 'review' && body.updated_by_agent_id) {
       const updatingAgent = queryOne<Agent>(
+        clientId,
         'SELECT is_master FROM agents WHERE id = ?',
         [body.updated_by_agent_id]
       );
@@ -101,6 +106,7 @@ export async function PATCH(
       // Log status change event
       const eventType = body.status === 'done' ? 'task_completed' : 'task_status_changed';
       run(
+        clientId,
         `INSERT INTO events (id, type, task_id, message, created_at)
          VALUES (?, ?, ?, ?, ?)`,
         [uuidv4(), eventType, id, `Task "${existing.title}" moved to ${body.status}`, now]
@@ -113,9 +119,10 @@ export async function PATCH(
       values.push(body.assigned_agent_id);
 
       if (body.assigned_agent_id) {
-        const agent = queryOne<Agent>('SELECT name FROM agents WHERE id = ?', [body.assigned_agent_id]);
+        const agent = queryOne<Agent>(clientId, 'SELECT name FROM agents WHERE id = ?', [body.assigned_agent_id]);
         if (agent) {
           run(
+            clientId,
             `INSERT INTO events (id, type, agent_id, task_id, message, created_at)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [uuidv4(), 'task_assigned', body.assigned_agent_id, id, `"${existing.title}" assigned to ${agent.name}`, now]
@@ -137,10 +144,11 @@ export async function PATCH(
     values.push(now);
     values.push(id);
 
-    run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
+    run(clientId, `UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
 
     // Fetch updated task with all joined fields
     const task = queryOne<Task>(
+      clientId,
       `SELECT t.*,
         aa.name as assigned_agent_name,
         aa.avatar_emoji as assigned_agent_emoji,
@@ -167,7 +175,10 @@ export async function PATCH(
       const missionControlUrl = getMissionControlUrl();
       fetch(`${missionControlUrl}/api/tasks/${id}/dispatch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Id': clientId
+        }
       }).catch(err => {
         console.error('Auto-dispatch failed:', err);
       });
@@ -187,7 +198,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const existing = queryOne<Task>('SELECT * FROM tasks WHERE id = ?', [id]);
+    const clientId = getClientId(request);
+    const existing = queryOne<Task>(clientId, 'SELECT * FROM tasks WHERE id = ?', [id]);
 
     if (!existing) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
@@ -195,13 +207,13 @@ export async function DELETE(
 
     // Delete or nullify related records first (foreign key constraints)
     // Note: task_activities and task_deliverables have ON DELETE CASCADE
-    run('DELETE FROM openclaw_sessions WHERE task_id = ?', [id]);
-    run('DELETE FROM events WHERE task_id = ?', [id]);
+    run(clientId, 'DELETE FROM openclaw_sessions WHERE task_id = ?', [id]);
+    run(clientId, 'DELETE FROM events WHERE task_id = ?', [id]);
     // Conversations reference tasks - nullify or delete
-    run('UPDATE conversations SET task_id = NULL WHERE task_id = ?', [id]);
+    run(clientId, 'UPDATE conversations SET task_id = NULL WHERE task_id = ?', [id]);
 
     // Now delete the task (cascades to task_activities and task_deliverables)
-    run('DELETE FROM tasks WHERE id = ?', [id]);
+    run(clientId, 'DELETE FROM tasks WHERE id = ?', [id]);
 
     // Broadcast deletion via SSE
     broadcast({

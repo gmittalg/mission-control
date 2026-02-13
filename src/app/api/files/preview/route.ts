@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
+import { getClientId } from '@/lib/api-utils';
 
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get('path');
@@ -19,14 +20,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Only HTML files can be previewed' }, { status: 400 });
   }
 
-  // Expand tilde and normalize
+  // Expanded tilde and normalize
   const expandedPath = filePath.replace(/^~/, process.env.HOME || '');
   const normalizedPath = path.normalize(expandedPath);
+  const clientId = getClientId(request);
 
-  // Security check - only allow paths from environment config
+  // Security check - only allow paths from environment config, scoped by clientId for projects
   const allowedPaths = [
     process.env.WORKSPACE_BASE_PATH?.replace(/^~/, process.env.HOME || ''),
-    process.env.PROJECTS_PATH?.replace(/^~/, process.env.HOME || ''),
+    path.join(process.env.PROJECTS_PATH?.replace(/^~/, process.env.HOME || '') || '', clientId === 'default' ? '' : clientId),
   ].filter(Boolean) as string[];
 
   const isAllowed = allowedPaths.some(allowed =>

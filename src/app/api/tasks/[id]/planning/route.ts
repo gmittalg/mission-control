@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
+import { getClientId } from '@/lib/api-utils';
 // File system imports removed - using OpenClaw API instead
 
 // Planning session prefix for OpenClaw (must match agent:main: format)
@@ -40,21 +41,21 @@ function extractJSON(text: string): object | null {
 }
 
 // Helper to get messages from OpenClaw API
-async function getMessagesFromOpenClaw(sessionKey: string): Promise<Array<{ role: string; content: string }>> {
+async function getMessagesFromOpenClaw(sessionKey: string, clientId: string = 'default'): Promise<Array<{ role: string; content: string }>> {
   try {
-    const client = getOpenClawClient();
+    const client = getOpenClawClient(clientId);
     if (!client.isConnected()) {
       await client.connect();
     }
-    
+
     // Use chat.history API to get session messages
     const result = await client.call<{ messages: Array<{ role: string; content: Array<{ type: string; text?: string }> }> }>('chat.history', {
       sessionKey,
       limit: 20,
     });
-    
+
     const messages: Array<{ role: string; content: string }> = [];
-    
+
     for (const msg of result.messages || []) {
       if (msg.role === 'assistant') {
         // Extract text content from assistant messages
@@ -67,7 +68,7 @@ async function getMessagesFromOpenClaw(sessionKey: string): Promise<Array<{ role
         }
       }
     }
-    
+
     console.log('[Planning] Found', messages.length, 'assistant messages via API');
     return messages;
   } catch (err) {
@@ -82,10 +83,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: taskId } = await params;
+  const clientId = getClientId(request);
 
   try {
     // Get task
-    const task = getDb().prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
+    const task = getDb(clientId).prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
       id: string;
       title: string;
       description: string;
@@ -96,34 +98,34 @@ export async function GET(
       planning_spec?: string;
       planning_agents?: string;
     } | undefined;
-    
+
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
     // Parse planning messages from JSON
     let messages = task.planning_messages ? JSON.parse(task.planning_messages) : [];
-    
+
     // Find the latest question (last assistant message with question structure)
     let lastAssistantMessage = [...messages].reverse().find((m: { role: string }) => m.role === 'assistant');
     let currentQuestion = null;
-    
+
     // If no assistant response in DB but session exists, check OpenClaw for new messages
     if (!lastAssistantMessage && task.planning_session_key && messages.length > 0) {
       console.log('[Planning GET] No assistant message in DB, checking OpenClaw...');
-      const openclawMessages = await getMessagesFromOpenClaw(task.planning_session_key);
+      const openclawMessages = await getMessagesFromOpenClaw(task.planning_session_key, clientId);
       if (openclawMessages.length > 0) {
         const newAssistant = [...openclawMessages].reverse().find(m => m.role === 'assistant');
         if (newAssistant) {
           console.log('[Planning GET] Found assistant message in OpenClaw, syncing to DB');
           messages.push({ role: 'assistant', content: newAssistant.content, timestamp: Date.now() });
-          getDb().prepare('UPDATE tasks SET planning_messages = ? WHERE id = ?')
+          getDb(clientId).prepare('UPDATE tasks SET planning_messages = ? WHERE id = ?')
             .run(JSON.stringify(messages), taskId);
           lastAssistantMessage = { role: 'assistant', content: newAssistant.content };
         }
       }
     }
-    
+
     if (lastAssistantMessage) {
       // Use extractJSON to handle code blocks and surrounding text
       const parsed = extractJSON(lastAssistantMessage.content);
@@ -154,10 +156,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: taskId } = await params;
+  const clientId = getClientId(request);
 
   try {
     // Get task
-    const task = getDb().prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
+    const task = getDb(clientId).prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as {
       id: string;
       title: string;
       description: string;
@@ -165,7 +168,7 @@ export async function POST(
       planning_session_key?: string;
       planning_messages?: string;
     } | undefined;
-    
+
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
@@ -203,7 +206,7 @@ Respond with ONLY valid JSON in this format:
 }`;
 
     // Connect to OpenClaw and send the planning request
-    const client = getOpenClawClient();
+    const client = getOpenClawClient(clientId);
     if (!client.isConnected()) {
       await client.connect();
     }
@@ -218,8 +221,8 @@ Respond with ONLY valid JSON in this format:
 
     // Store the session key and initial message
     const messages = [{ role: 'user', content: planningPrompt, timestamp: Date.now() }];
-    
-    getDb().prepare(`
+
+    getDb(clientId).prepare(`
       UPDATE tasks 
       SET planning_session_key = ?, planning_messages = ?, status = 'planning'
       WHERE id = ?
@@ -230,11 +233,11 @@ Respond with ONLY valid JSON in this format:
     let response = null;
     for (let i = 0; i < 30; i++) { // Poll for up to 30 seconds
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Get messages via OpenClaw API
-      const transcriptMessages = await getMessagesFromOpenClaw(sessionKey);
+      const transcriptMessages = await getMessagesFromOpenClaw(sessionKey, clientId);
       console.log('[Planning] API messages:', transcriptMessages.length);
-      
+
       if (transcriptMessages.length > 0) {
         // Get the last assistant message
         const lastAssistant = [...transcriptMessages].reverse().find(m => m.role === 'assistant');
@@ -249,8 +252,8 @@ Respond with ONLY valid JSON in this format:
     if (response) {
       // Parse and store the response using extractJSON to handle code blocks
       messages.push({ role: 'assistant', content: response, timestamp: Date.now() });
-      
-      getDb().prepare(`
+
+      getDb(clientId).prepare(`
         UPDATE tasks SET planning_messages = ? WHERE id = ?
       `).run(JSON.stringify(messages), taskId);
 

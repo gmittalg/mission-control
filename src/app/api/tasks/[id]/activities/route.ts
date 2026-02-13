@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import type { TaskActivity } from '@/lib/types';
+import { getClientId } from '@/lib/api-utils';
 
 /**
  * GET /api/tasks/[id]/activities
@@ -18,7 +19,8 @@ export async function GET(
 ) {
   try {
     const taskId = params.id;
-    const db = getDb();
+    const clientId = getClientId(request);
+    const db = getDb(clientId);
 
     // Get activities with agent info
     const activities = db.prepare(`
@@ -76,8 +78,9 @@ export async function POST(
 ) {
   try {
     const taskId = params.id;
+    const clientId = getClientId(request);
     const body = await request.json();
-    
+
     const { activity_type, message, agent_id, metadata } = body;
 
     if (!activity_type || !message) {
@@ -87,7 +90,7 @@ export async function POST(
       );
     }
 
-    const db = getDb();
+    const db = getDb(clientId);
     const id = crypto.randomUUID();
 
     // Insert activity

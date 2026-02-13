@@ -1,17 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { getClientId } from '@/lib/api-utils';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 // GET /api/openclaw/sessions/[id] - Get session details
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const client = getOpenClawClient();
+    const clientId = getClientId(request);
+    const client = getOpenClawClient(clientId);
 
     if (!client.isConnected()) {
       try {
@@ -59,7 +61,8 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    const client = getOpenClawClient();
+    const clientId = getClientId(request);
+    const client = getOpenClawClient(clientId);
 
     if (!client.isConnected()) {
       try {
@@ -93,7 +96,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     const body = await request.json();
     const { status, ended_at } = body;
 
-    const db = getDb();
+    const clientId = getClientId(request);
+    const db = getDb(clientId);
 
     // Find session by openclaw_session_id
     const session = db.prepare('SELECT * FROM openclaw_sessions WHERE openclaw_session_id = ?').get(id) as any;
@@ -137,7 +141,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         db.prepare('UPDATE agents SET status = ? WHERE id = ?').run('idle', session.agent_id);
       }
       if (session.task_id) {
-        broadcast({
+        broadcast(clientId, {
           type: 'agent_completed',
           payload: {
             taskId: session.task_id,
@@ -158,10 +162,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 }
 
 // DELETE /api/openclaw/sessions/[id] - Delete a session and its associated agent
-export async function DELETE(request: Request, { params }: RouteParams) {
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const db = getDb();
+    const clientId = getClientId(request);
+    const db = getDb(clientId);
 
     // Find session by openclaw_session_id or internal id
     let session = db.prepare('SELECT * FROM openclaw_sessions WHERE openclaw_session_id = ?').get(id) as any;
@@ -195,7 +200,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
     }
 
     // Broadcast deletion event
-    broadcast({
+    broadcast(clientId, {
       type: 'agent_completed',
       payload: {
         taskId,
