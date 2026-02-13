@@ -32,14 +32,14 @@ Mission Control is a task management system that lets you create tasks, plan the
 │  ┌─────────────────┐         ┌─────────────────────────────┐   │
 │  │ Mission Control │ ◄─────► │     OpenClaw Gateway        │   │
 │  │   (Next.js)     │   WS    │  (AI Agent Runtime)         │   │
-│  │   Port 3000     │         │  Port 18789                 │   │
+│  │   Port 5000     │         │  Port 18789                 │   │
 │  └─────────────────┘         └─────────────────────────────┘   │
-│         │                              │                        │
-│         ▼                              ▼                        │
-│  ┌─────────────┐              ┌─────────────────┐              │
-│  │   SQLite    │              │   AI Provider   │              │
-│  │  Database   │              │ (Anthropic/etc) │              │
-│  └─────────────┘              └─────────────────┘              │
+│         │         │                    │                        │
+│         ▼         └────────┐           ▼                        │
+│  ┌─────────────┐     ┌─────────────┐  ┌─────────────────┐       │
+│  │  Master DB  │     │  Client DBs │  │   AI Provider   │       │
+│  │ (Clients)   │     │ (Tasks/etc) │  │ (Anthropic/etc) │       │
+│  └─────────────┘     └─────────────┘  └─────────────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,20 +139,24 @@ touch .env.local
 Open it in a text editor and add:
 
 ```env
-# OpenClaw Gateway Connection
+# OpenClaw Gateway Connection (Used to seed the 'default' client on first run)
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=your-openclaw-token-here
 
 # Optional: Custom port for Mission Control
-PORT=3000
+PORT=5000
+
+# Optional: Path to the Master Database
+# MASTER_DATABASE_PATH=./master.db
 ```
 
 **How to get these values:**
 
 | Variable | Where to find it |
 |----------|------------------|
-| `OPENCLAW_GATEWAY_URL` | The WebSocket URL where OpenClaw is running. Default is `ws://127.0.0.1:18789` for local. For remote, use `wss://your-server.example.com` |
+| `OPENCLAW_GATEWAY_URL` | The WebSocket URL where OpenClaw is running. Default is `ws://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | Found in your OpenClaw config file at `~/.openclaw/openclaw.json` under `gateway.token` |
+| `MASTER_DATABASE_PATH` | (Optional) Path to where the master client database should be stored. |
 
 ### Step 4: Start OpenClaw (if not already running)
 
@@ -179,12 +183,12 @@ npm run dev
 You should see:
 ```
 ▲ Next.js 15.x.x
-- Local: http://localhost:3000
+- Local: http://localhost:5000
 ```
 
 ### Step 6: Open in Browser
 
-Go to: **http://localhost:3000**
+Go to: **http://localhost:5000**
 
 🎉 You should see the Mission Control dashboard!
 
@@ -235,7 +239,7 @@ You can drag tasks between columns manually, or let the system auto-advance them
 |----------|----------|---------|-------------|
 | `OPENCLAW_GATEWAY_URL` | Yes | `ws://127.0.0.1:18789` | WebSocket URL to OpenClaw Gateway |
 | `OPENCLAW_GATEWAY_TOKEN` | Yes | - | Authentication token for OpenClaw |
-| `PORT` | No | `3000` | Port for Mission Control web server |
+| `PORT` | No | `5000` | Port for Mission Control web server |
 
 ### OpenClaw Configuration
 
@@ -313,11 +317,12 @@ OPENCLAW_GATEWAY_TOKEN=your-secret-token
 
 ## 🗄️ Database
 
-Mission Control uses SQLite for storage. The database file is automatically created at:
+Mission Control uses a multi-tenant SQLite architecture:
 
-```
-./mission-control.db
-```
+- **master.db**: Stores client configurations, gateway URLs, and credentials.
+- **[client-id].db**: Each client has their own isolated database for tasks, agents, and history.
+
+The default database is still created at `./mission-control.db` unless configured otherwise.
 
 ### Resetting the Database
 
@@ -374,8 +379,8 @@ SELECT * FROM tasks;
 ### Port Already in Use
 
 ```bash
-# Find what's using port 3000
-lsof -i :3000
+# Find what's using port 5000
+lsof -i :5000
 
 # Kill it (replace PID with the actual number)
 kill -9 PID
@@ -395,17 +400,18 @@ mission-control/
 │   │   ├── api/            # Backend API endpoints
 │   │   │   ├── tasks/      # Task CRUD operations
 │   │   │   ├── agents/     # Agent management
+│   │   │   ├── clients/    # Client management (Multi-tenant)
 │   │   │   └── openclaw/   # OpenClaw proxy endpoints
 │   │   └── page.tsx        # Main dashboard page
 │   ├── components/         # React components
-│   │   ├── MissionQueue.tsx    # Kanban board
-│   │   ├── TaskModal.tsx       # Task create/edit modal
+│   │   ├── ClientSwitcher.tsx  # Multi-client toggle
 │   │   └── ...
 │   └── lib/                # Utilities and core logic
-│       ├── db/             # Database setup and queries
+│       ├── db/             # Master and Client DB management
 │       ├── openclaw/       # OpenClaw client
-│       └── store.ts        # State management
+│       └── ...
 ├── .env.local              # Your environment config (create this)
+├── master.db               # Master client database
 ├── package.json
 └── README.md
 ```
