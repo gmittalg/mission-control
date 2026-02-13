@@ -48,7 +48,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 }
 
 // POST /api/openclaw/sessions/[id] - Send a message to the session
-export async function POST(request: Request, { params }: RouteParams) {
+export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await request.json();
@@ -90,7 +90,7 @@ export async function POST(request: Request, { params }: RouteParams) {
 }
 
 // PATCH /api/openclaw/sessions/[id] - Update session status (for completing sub-agents)
-export async function PATCH(request: Request, { params }: RouteParams) {
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await request.json();

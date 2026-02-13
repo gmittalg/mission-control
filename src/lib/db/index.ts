@@ -78,3 +78,4 @@ export function transaction<T>(clientId: string, fn: () => T): T {
 
 // Export migration utilities for CLI use
 export { runMigrations, getMigrationStatus } from './migrations';
+export { getMasterDb } from './master';

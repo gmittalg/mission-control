@@ -141,7 +141,7 @@ export async function POST(
     };
 
     // Broadcast to SSE clients
-    broadcast({
+    broadcast(clientId, {
       type: 'activity_logged',
       payload: result,
     });

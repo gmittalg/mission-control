@@ -138,6 +138,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     const existingSession = queryOne<OpenClawSession>(
+      clientId,
       'SELECT * FROM openclaw_sessions WHERE agent_id = ? AND status = ?',
       [id, 'active']
     );

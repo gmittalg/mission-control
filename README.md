@@ -43,8 +43,42 @@ Mission Control is a task management system that lets you create tasks, plan the
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Mission Control** = The dashboard you interact with (this project)  
-**OpenClaw Gateway** = The AI runtime that actually executes tasks (separate project)
+---
+
+## 🏢 Multi-Client Support
+
+Mission Control supports multiple isolated clients. Each client has its own:
+- **Database**: Complete isolation of tasks, agents, and history.
+- **OpenClaw Connection**: Specific Gateway URL and Token.
+- **Event Stream**: Real-time updates are scoped to the active client.
+
+### How it Works
+
+1. **Master Database**: Stores client configurations and credentials.
+2. **Client Identification**: The client is identified via the `X-Client-Id` header in API requests.
+3. **UI Context**: The dashboard includes a `ClientSwitcher` to seamlessly toggle between client environments.
+
+To add a new client, you can use the Client Management API:
+
+```bash
+# Adding a client via API
+curl -X POST http://localhost:5000/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "client-1",
+    "name": "Acme Corp",
+    "gateway_url": "ws://127.0.0.1:18789",
+    "gateway_token": "your-token",
+    "db_path": "./acme.db"
+  }'
+```
+
+Alternatively, you can add an entry directly to the `clients` table in `master.db`:
+
+```bash
+# Example of adding a client via CLI
+sqlite3 master.db "INSERT INTO clients (id, name, gateway_url, gateway_token, db_path) VALUES ('client-1', 'Acme Corp', 'ws://127.0.0.1:18789', 'token-1', './acme.db');"
+```
 
 ---
 

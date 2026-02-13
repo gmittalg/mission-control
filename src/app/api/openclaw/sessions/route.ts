@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/openclaw/sessions - Create a new OpenClaw session
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { channel, peer } = body;
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const clientId = getClientId(request as unknown as NextRequest);
+    const clientId = getClientId(request);
     const client = getOpenClawClient(clientId);
 
     if (!client.isConnected()) {

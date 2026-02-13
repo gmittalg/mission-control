@@ -163,7 +163,7 @@ export async function PATCH(
 
     // Broadcast task update via SSE
     if (task) {
-      broadcast({
+      broadcast(clientId, {
         type: 'task_updated',
         payload: task,
       });
@@ -216,7 +216,7 @@ export async function DELETE(
     run(clientId, 'DELETE FROM tasks WHERE id = ?', [id]);
 
     // Broadcast deletion via SSE
-    broadcast({
+    broadcast(clientId, {
       type: 'task_deleted',
       payload: { id },
     });
